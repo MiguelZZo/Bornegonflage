@@ -59,6 +59,12 @@ html,body{background:var(--bg);font-family:-apple-system,BlinkMacSystemFont,'Seg
 .sc-me{display:flex;flex-direction:column;align-items:flex-end;gap:5px;flex-shrink:0}
 .gps-btn{font-size:16px;text-decoration:none;line-height:1;display:block}
 .sc-ct{font-size:11px;background:var(--gl);color:var(--g);border-radius:20px;padding:3px 9px;font-weight:600}
+.sc-last{font-size:11px;color:var(--muted)}
+/* Lightbox photo */
+#lightbox{display:none;position:fixed;inset:0;background:rgba(0,0,0,.92);z-index:999;align-items:center;justify-content:center;cursor:zoom-out}
+#lightbox.open{display:flex}
+#lightbox img{max-width:95vw;max-height:90vh;border-radius:10px;object-fit:contain}
+#lightbox-close{position:absolute;top:16px;right:16px;background:rgba(255,255,255,.2);border:none;color:#fff;font-size:24px;width:40px;height:40px;border-radius:50%;cursor:pointer;display:flex;align-items:center;justify-content:center}
 .dot{width:9px;height:9px;border-radius:50%;display:inline-block}
 
 /* Inspection rows */
@@ -181,6 +187,10 @@ html,body{background:var(--bg);font-family:-apple-system,BlinkMacSystemFont,'Seg
   <div style="display:flex;align-items:center;justify-content:center;height:100vh;color:var(--muted)">Chargement…</div>
 </div>
 <input type="file" id="ph-in" accept="image/*" multiple capture="environment" style="display:none">
+<div id="lightbox" onclick="closeLightbox()">
+  <button id="lightbox-close" onclick="event.stopPropagation();closeLightbox()">×</button>
+  <img id="lightbox-img" src="" alt="Photo agrandie">
+</div>
 
 <script>
 /* ── Data ── */
@@ -295,15 +305,17 @@ const DB={
     const data=await r.json();
     if(!data)return[];
     return Object.entries(data)
-      .map(([id,v])=>({id,...v}))
+      .map(([id,v])=>({id,type:v.type,addr:v.addr,...(v.coords?{coords:v.coords}:{})}))
       .sort((a,b)=>a.addr.localeCompare(b.addr));
   },
   async upsertStation(st){
     const {id,...rest}=st;
+    const payload={type:rest.type,addr:rest.addr};
+    if(rest.coords)payload.coords=rest.coords;
     const r=await fetch(FB_URL+'/stations/'+encodeURIComponent(id)+'.json',{
       method:'PUT',
       headers:{'Content-Type':'application/json'},
-      body:JSON.stringify(rest)
+      body:JSON.stringify(payload)
     });
     if(!r.ok)throw new Error('Erreur sauvegarde borne');
   },
@@ -404,19 +416,28 @@ function vHome(){
     const a=S.inspections.filter(i=>i.sid===sid).sort((a,b)=>b.date.localeCompare(a.date));
     return a[0]||null;
   };
-  const gpsUrl=s=>s.id==='s4'
-    ?`https://www.google.com/maps/dir/?api=1&destination=47.46932164421001,-0.5704969438935711`
+  const gpsUrl=s=>s.coords
+    ?`https://www.google.com/maps/dir/?api=1&destination=${s.coords}`
     :`https://www.google.com/maps/dir/?api=1&destination=${encodeURIComponent(s.addr+', Angers')}`;
   const card=s=>{
     const n=cnt(s.id),l=last(s.id);
     const hp=l&&(()=>{const allSecs=[l.struct,l.gonflage,l.kit,l.nett].filter(Boolean);return allSecs.some(obj=>Object.values(obj).some(v=>v==='def'||v==='rem'));})();
-    const dot=!l?'#ccc':hp?'#BA7517':'#639922';
+    const dot=!l?'#aaa':hp?'#BA7517':'#639922';
     const fx=s.type.includes('Fix');
+    const lastInfo=l
+      ?`<span class="sc-last">${fdate(l.date)}</span>`
+      :`<span class="sc-last" style="color:var(--r);font-weight:600">À contrôler</span>`;
     return `<div class="sc" data-a="go-st" data-sid="${s.id}">
       <div class="sc-ic${fx?' fx':''}"><span>${fx?'🔧':'💨'}</span></div>
-      <div class="sc-in"><div class="sc-ad">${esc(s.addr)}</div><div class="sc-ty">${esc(s.type)}</div></div>
+      <div class="sc-in">
+        <div class="sc-ad">${esc(s.addr)}</div>
+        <div class="sc-ty">${esc(s.type)}</div>
+        <div style="display:flex;align-items:center;gap:6px;margin-top:3px">
+          ${lastInfo}
+          ${n>0?`<span style="font-size:10px;color:var(--muted)">${n} contrôle${n>1?'s':''}</span>`:''}
+        </div>
+      </div>
       <div class="sc-me">
-        <span class="sc-ct">${n} contrôle${n!==1?'s':''}</span>
         <a href="${gpsUrl(s)}" target="_blank" rel="noopener" class="gps-btn" onclick="event.stopPropagation()" title="Ouvrir dans Google Maps">🗺️</a>
         <span class="dot" style="background:${dot}"></span>
       </div>
@@ -425,11 +446,14 @@ function vHome(){
   const pumps=S.stations.filter(s=>s.type==='ALTAO Pump');
   const fix=S.stations.filter(s=>s.type==="ALTAO Fix'Air");
   const oth=S.stations.filter(s=>s.type!=='ALTAO Pump'&&s.type!=="ALTAO Fix'Air");
-  const sig=S.inspections.filter(i=>{
-    const sec=getSections(S.stations.find(s=>s.id===i.sid)?.type||'');
-    const allSecs=[i.struct,i.gonflage,i.kit,i.nett].filter(Boolean);
+  /* Bug fix : compte les bornes dont le DERNIER contrôle a une anomalie */
+  const sig=S.stations.filter(s=>{
+    const l=last(s.id);
+    if(!l)return false;
+    const allSecs=[l.struct,l.gonflage,l.kit,l.nett].filter(Boolean);
     return allSecs.some(obj=>Object.values(obj).some(v=>v==='def'||v==='rem'));
   }).length;
+  const nonControlees=S.stations.filter(s=>!last(s.id)).length;
   return `
   <div class="hdr">
     <div style="flex:1;min-width:0">
@@ -442,8 +466,8 @@ function vHome(){
   <div class="pg">
     <div class="stats">
       <div class="stat"><div class="stat-n">${S.stations.length}</div><div class="stat-l">Bornes</div></div>
-      <div class="stat"><div class="stat-n">${S.inspections.length}</div><div class="stat-l">Contrôles</div></div>
-      <div class="stat"><div class="stat-n" style="${sig>0?'color:var(--o)':''}">${sig}</div><div class="stat-l">Signalements</div></div>
+      <div class="stat"><div class="stat-n" style="${sig>0?'color:var(--o)':''}">${sig}</div><div class="stat-l">Anomalies</div></div>
+      <div class="stat"><div class="stat-n" style="${nonControlees>0?'color:var(--r)':''}">${nonControlees}</div><div class="stat-l">À contrôler</div></div>
     </div>
     <div class="sec">💨 ALTAO Pump · ${pumps.length}</div>
     ${pumps.map(card).join('')}
@@ -477,8 +501,8 @@ function vStation(){
       <span style="color:var(--muted);font-size:18px">›</span>
     </div>`;
   };
-  const gpsUrl=st.id==='s4'
-    ?`https://www.google.com/maps/dir/?api=1&destination=47.46932164421001,-0.5704969438935711`
+  const gpsUrl=st.coords
+    ?`https://www.google.com/maps/dir/?api=1&destination=${st.coords}`
     :`https://www.google.com/maps/dir/?api=1&destination=${encodeURIComponent(st.addr+', Angers')}`;
   return `
   <div class="hdr">
@@ -608,7 +632,7 @@ function vDetail(){
   </tr>`).join(''):'';
 
   const photos=insp.photos&&insp.photos.length
-    ?`<div class="card"><div class="ct"><span class="ctl">📷 Photos · ${insp.photos.length}</span></div><div class="ph-grid">${insp.photos.map((s,i)=>`<img src="${s}" class="ph-img" alt="photo ${i+1}">`).join('')}</div></div>`:'';
+    ?`<div class="card"><div class="ct"><span class="ctl">📷 Photos · ${insp.photos.length}</span></div><div class="ph-grid">${insp.photos.map((s,i)=>`<img src="${s}" class="ph-img ph-zoom" data-a="zoom-ph" data-src="${s}" alt="photo ${i+1}" style="cursor:zoom-in">`).join('')}</div></div>`:'';
 
   return `
   <div class="hdr">
@@ -1160,7 +1184,11 @@ async function onCk(e){
   else if(a==='print-compile'){doCompileExport();}
   else if(a==='go-rapport'){if(S.isAdmin)go('rapport');}
   else if(a==='go-det'){go('detail',{iid:el.dataset.iid});}
-  else if(a==='add-ph'){document.getElementById('ph-in').click();}
+  else if(a==='zoom-ph'){
+    const lb=document.getElementById('lightbox');
+    const img=document.getElementById('lightbox-img');
+    if(lb&&img){img.src=el.dataset.src;lb.classList.add('open');}
+  }
   else if(a==='del-ph'){
     snap();
     const idx=parseInt(el.dataset.idx);
@@ -1212,10 +1240,13 @@ async function onCk(e){
       if(S.editIid){
         S.inspections=S.inspections.map(i=>i.id===S.editIid?insp:i);
         S.editIid=null;
+        go('station');
+        toast('✅ Contrôle modifié');
       } else {
         S.inspections=[...S.inspections,insp];
+        go('station');
+        toast('✅ Contrôle enregistré');
       }
-      go('station');
     }catch(e){
       btn.disabled=false;
       btn.textContent=S.editIid?'💾 Enregistrer les modifications':'💾 Enregistrer le contrôle';
@@ -1285,7 +1316,22 @@ function onCh(e){
   }
 }
 
-function snapRapport(){
+function closeLightbox(){
+  const lb=document.getElementById('lightbox');
+  if(lb)lb.classList.remove('open');
+}
+
+/* Fermer la lightbox avec Escape */
+document.addEventListener('keydown',e=>{if(e.key==='Escape')closeLightbox();});
+
+/* ── Feedback toast après sauvegarde ── */
+function toast(msg,color='var(--g)'){
+  const t=document.createElement('div');
+  t.textContent=msg;
+  t.style.cssText=`position:fixed;bottom:24px;left:50%;transform:translateX(-50%);background:${color};color:#fff;padding:10px 22px;border-radius:24px;font-size:14px;font-weight:600;z-index:9999;box-shadow:0 4px 16px rgba(0,0,0,.2);pointer-events:none;transition:opacity .4s`;
+  document.body.appendChild(t);
+  setTimeout(()=>{t.style.opacity='0';setTimeout(()=>t.remove(),400);},2000);
+}
   if(S.view!=='rapport')return;
   const R=S.rapport;
   const from=document.getElementById('rpt-from'),to=document.getElementById('rpt-to');
