@@ -404,9 +404,9 @@ function vHome(){
     const a=S.inspections.filter(i=>i.sid===sid).sort((a,b)=>b.date.localeCompare(a.date));
     return a[0]||null;
   };
-  const gpsUrl=addr=>s.id==='s4'
+  const gpsUrl=s=>s.id==='s4'
     ?`https://www.google.com/maps/dir/?api=1&destination=47.46932164421001,-0.5704969438935711`
-    :`https://www.google.com/maps/dir/?api=1&destination=${encodeURIComponent(addr+', Angers')}`;
+    :`https://www.google.com/maps/dir/?api=1&destination=${encodeURIComponent(s.addr+', Angers')}`;
   const card=s=>{
     const n=cnt(s.id),l=last(s.id);
     const hp=l&&(()=>{const allSecs=[l.struct,l.gonflage,l.kit,l.nett].filter(Boolean);return allSecs.some(obj=>Object.values(obj).some(v=>v==='def'||v==='rem'));})();
@@ -417,7 +417,7 @@ function vHome(){
       <div class="sc-in"><div class="sc-ad">${esc(s.addr)}</div><div class="sc-ty">${esc(s.type)}</div></div>
       <div class="sc-me">
         <span class="sc-ct">${n} contrôle${n!==1?'s':''}</span>
-        <a href="${gpsUrl(s.addr)}" target="_blank" rel="noopener" class="gps-btn" onclick="event.stopPropagation()" title="Ouvrir dans Google Maps">🗺️</a>
+        <a href="${gpsUrl(s)}" target="_blank" rel="noopener" class="gps-btn" onclick="event.stopPropagation()" title="Ouvrir dans Google Maps">🗺️</a>
         <span class="dot" style="background:${dot}"></span>
       </div>
     </div>`;
